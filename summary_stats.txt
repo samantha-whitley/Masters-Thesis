@@ -1,0 +1,5 @@
+
+Summary Statistics for 2019
+=================================
+Statistic Mean St. Dev. Min Max N
+=================================
