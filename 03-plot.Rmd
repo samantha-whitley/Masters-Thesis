@@ -53,6 +53,7 @@ tm_shape(df_sp2019_plot) + tm_fill(fill = "ME_GDP") + tm_borders()
 
 
 ```
+
 ```{r}
 
 ggplot(df_sp_host, aes(x = year, y = ME_GDP, color = factor(dca))) +

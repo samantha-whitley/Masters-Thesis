@@ -1,5 +1,12 @@
-
-show_col_types = FALSE
+df_sp <- df_sp %>% 
+  mutate(dca = if_else(country_name == "Netherlands", 1, dca)) %>%
+  mutate(dca = if_else(country_name == "Greece", 1, dca))  %>%
+  mutate(dca = if_else(country_name == "Latvia", 0, dca))  %>%
+  mutate(East = if_else(joined_nato >= 1999, 1, 0)) %>%
+  mutate(ln_ME_GDP = log(ME_GDP),
+         ln_Population = log(Population))  %>%
+  filter(year >= 2014) %>%
+  rename(democracy = 'Political regime')
 
 ## make continental europe non nuclear countries df - canada excluded for spatial weights
 df_sp_host <- df_sp %>% 
@@ -7,21 +14,17 @@ df_sp_host <- df_sp %>%
   filter(!(country_name %in% c("United States"))) %>% 
   filter(!(country_name %in% c("United Kingdom"))) %>%
   filter(!(country_name %in% c("Canada"))) 
-  #filter(!(country_name %in% c("Montenegro"))) %>%
-  #filter(!(country_name %in% c("North Macedonia"))) 
-  #filter(!(country_name %in% c("Turkiye"))) %>% 
-  #filter(!(country_name %in% c("Greece")))
 
 #bit of cleaning
-df_sp_host <- df_sp_host %>% 
-  mutate(dca = if_else(country_name == "Netherlands", 1, dca)) %>%
-  mutate(dca = if_else(country_name == "Greece", 1, dca))  %>%
-  mutate(dca = if_else(country_name == "Latvia", 0, dca))  %>%
-  mutate(East = if_else(joined_nato >= 1999, 1, 0)) %>%
-  mutate(ln_ME_GDP = log(ME_GDP),
-         ln_Population = log(Population))  %>%
-  filter(in_nato == 1) %>%
+
+# create lagged ME
+df_sp_host <- df_sp_host[order(df_sp_host$country_name, df_sp_host$year), ]
+lag_by_country <- function(x) c(NA, head(x, -1))
+df_sp_host$ln_ME_GDP_lag <- unlist(with(df_sp_host, ave(ln_ME_GDP, country_name, FUN = lag_by_country)))
+
+df_sp_host <- df_sp_host %>%   
   filter(year >= 2014)
+
 
 #create distance to moscow
 coords <- cbind(df_sp_host$caplong, df_sp_host$caplat)
@@ -34,8 +37,13 @@ df_sp_host$distance_to_moscow <- df_sp_host$distance_to_moscow / 1000 ##in km
 df_sp_host$distance_to_moscow <- as.numeric(df_sp_host$distance_to_moscow)
 df_sp_host$inverse_distance_to_moscow <- 1 / df_sp_host$distance_to_moscow
 
+df_sp_host <- df_sp_host %>%
+  mutate(log_inverse_distance_to_moscow = log(inverse_distance_to_moscow))
+df_sp_host <- df_sp_host %>%
+  mutate(log_distance_to_moscow = log(distance_to_moscow))
 
 df_sp_host <- st_sf(df_sp_host)
+
 
 #### Correlation 
 
@@ -67,15 +75,17 @@ df_sp_host_ols <- df_sp_host %>%
   filter(year >= 2014)
 
 ols_models <- list()
-for (year in unique(df_sp_host_ols$year)) {
-  df_year <- df_sp_host_ols[df_sp_host_ols$year == year, ] %>%
+for (year in unique(df_sp_host$year)) {
+  df_year <- df_sp_host[df_sp_host$year == year, ] %>%
     filter(!is.na(ln_ME_GDP))
-    lm_model <- lm(ln_ME_GDP ~ dca + East + ln_Population, data = df_year)
+    lm_model <- lm(ln_ME_GDP ~ dca + ln_Population + East, data = df_year)
   robust_se <- sqrt(diag(vcovHC(lm_model, type = "HC1")))
   lm_model$robust_se <- robust_se
     ols_models[[as.character(year)]] <- lm_model
 }
 
+modelsummary(ols_models,
+             stars = TRUE)
 ####
 
 ##### Contiguity & Contiguity + US weights
@@ -83,20 +93,6 @@ for (year in unique(df_sp_host_ols$year)) {
 nb_contiguity <- poly2nb(df_sp_host$geom_sp, queen = TRUE)
 
 nbw_continguity <- nb2listw(nb_contiguity, style = "B", zero.policy = T)
-
-####
-
-#### Moran's I Year Test
-df_sp2020 <- df_sp %>% 
-  filter(!is.na(ME_GDP)) %>% 
-  filter(year == 2020) 
-
-nb_contiguity2020 <- poly2nb(df_sp2020$geom_sp, queen = TRUE)
-nbw_contiguity2020 <- nb2listw(nb_contiguity2020, style = "B", zero.policy = T)
-
-moran_contiguity <- moran.test(df_sp2020$ME_GDP, nbw_contiguity2020, 
-                               alternative = "greater")
-moran_contiguity
 
 ####
 
@@ -157,7 +153,7 @@ for (year in unique(df_sp_host$year)) {
 str(df_sp_host)
 df_sp_host2019 <- df_sp_host %>% 
   filter(!is.na(ME_GDP)) %>% 
-  filter(year == 2019) 
+  filter(year == 2016) 
 
 df_centroids_2019 <- st_drop_geometry(df_sp_host2019)
 df_centroids_2019 <- st_as_sf(df_centroids_2019, coords = c("caplong", "caplat"), crs = 4326)
@@ -173,7 +169,7 @@ inverted_dists <- lapply(distances, function(x){1/x})
 
 nbw_inverted19 <- nb2listw(nb.dist.band, glist = inverted_dists, style = "B", zero.policy = TRUE)
 
-plot(st_geometry(df_sp_host2019), border = "lightgray")
+plot(st_geometry(df_sp), border = "lightgray")
 plot.nb(nb.dist.band, st_geometry(df_centroids_2019), add = TRUE)
 
 sar_2019_test <- lagsarlm(
@@ -185,6 +181,9 @@ sar_2019_test <- lagsarlm(
 
 summary(sar_2019_test, Nagelkerke = TRUE)
 
+modelsummary(sar_2019_test,
+             stars = TRUE
+             )
 ###
 
 
@@ -324,7 +323,6 @@ for (year in unique(df_sp_host$year)) {
   )
 }
 
-
 #### compare models inverse distance
 
 for (year in unique(df_sp_host$year)) {
@@ -384,7 +382,7 @@ for (year in unique(df_sp_host$year)) {
   df_year <- df_year %>%
     filter(!is.na(ln_ME_GDP))
   nb <- poly2nb(df_year$geom_sp, queen = TRUE)
-  nbw <- nb2listw(nb, style = "B", zero.policy = TRUE)
+  nbw <- nb2listw(nb, style = "W", zero.policy = TRUE)
   
   # Run spatial regression
   sar_year <- lagsarlm(
@@ -394,8 +392,92 @@ for (year in unique(df_sp_host$year)) {
     zero.policy = TRUE
   )
   
-  assign(paste0("sar_contiguity_", year), sar_year)
+  assign(paste0("sar_contiguity", year), sar_year)
 }
 
+#### spatial panel
+
+panel <- pdata.frame(df_sp_host)
+panel <- st_as_sf(panel)
+
+df_sp_host <- df_sp_host %>%
+  filter(year <= 2020)
+
+df_sp_no_host1 <- df_sp_host %>%
+  filter(!(country_name %in% c("Italy"))) |>
+  filter(!(country_name %in% c("Germany"))) |>
+  filter(!(country_name %in% c("Belgiun"))) |>
+  filter(!(country_name %in% c("Greece"))) |>
+  filter(!(country_name %in% c("Netherlands"))) |>
+  filter(!(country_name %in% c("Turkey"))) |>
+  filter(!(country_name %in% c("Norway"))) |>
+  filter(year <= 2020)
+
+df_sp_no_host <- df_sp_host %>%
+  filter(!(country_name %in% c("Italy"))) |>
+  filter(!(country_name %in% c("Germany"))) |>
+  filter(!(country_name %in% c("Belgiun"))) |>
+  filter(!(country_name %in% c("Greece"))) |>
+  filter(!(country_name %in% c("Netherlands"))) |>
+  filter(!(country_name %in% c("Turkey"))) |>
+  filter(year <= 2020)
+
+##weights
+df_sp_host2019 <- df_sp_host %>% 
+  filter(year == 2019) 
+
+df_sp_no_host2019 <- df_sp_no_host %>% 
+  filter(year == 2019) 
+
+df_sp_host1_2019 <- df_sp_host %>% 
+  filter(year == 2019) 
+
+df_sp_no_host1_2019 <- df_sp_no_host1 %>% 
+  filter(year == 2019) 
+ 
+#contiguity weights w/ host
+nb <- poly2nb(df_sp_host1_2019, queen = TRUE)
+nbw <- nb2listw(nb, style = "B", zero.policy = TRUE)
+
+# contiguity no hosts
+nb_no_19 <- poly2nb(df_sp_no_host1_2019, queen = TRUE)
+nbw_no_19 <- nb2listw(nb, style = "B", zero.policy = TRUE)
+
+# inverse distance weights w/ host
+df_centroids_2019 <- st_drop_geometry(df_sp_host2019)
+df_centroids_2019 <- st_as_sf(df_centroids_2019, coords = c("caplong", "caplat"), crs = 4326)
+coords <- cbind(df_sp_host2019$caplong, df_sp_host2019$caplat)
+k1 <- knn2nb(knearneigh(coords))
+critical.threshold <- max(unlist(nbdists(k1,coords)))
+nb.dist.band <- dnearneigh(coords, 0, critical.threshold)
+distances <- nbdists(nb.dist.band,coords)
+inverted_dists <- lapply(distances, function(x){1/x})
+nbw_inverted19 <- nb2listw(nb.dist.band, glist = inverted_dists, style = "B", zero.policy = TRUE)
+
+
+#inverse distance weights w/out host
+df_centroids_2019_no <- st_drop_geometry(df_sp_no_host2019)
+df_centroids_2019_no <- st_as_sf(df_centroids_2019_no, coords = c("caplong", "caplat"), crs = 4326)
+coords_no <- cbind(df_sp_no_host2019$caplong, df_sp_no_host2019$caplat)
+k1_no <- knn2nb(knearneigh(coords_no))
+critical.threshold_no <- max(unlist(nbdists(k1_no,coords_no)))
+nb.dist.band_no <- dnearneigh(coords_no, 0, critical.threshold_no)
+distances_no <- nbdists(nb.dist.band_no,coords_no)
+inverted_dists_no <- lapply(distances_no, function(x){1/x})
+nbw_inverted19_no <- nb2listw(nb.dist.band_no, glist = inverted_dists_no, style = "B", zero.policy = TRUE)
+
+###panel spatial lag
+
+id_spgm_no_host <- spgm(ln_ME_GDP ~ democracy + ln_Population + terror_attacks, data=df_sp_no_host,
+                        lag = TRUE, spatial.error = FALSE, 
+                        listw = nbw_inverted19_no, method = "w2sls")
+
+id_spgm_host <- spgm(ln_ME_GDP ~ democracy + ln_Population + terror_attacks, data=df_sp_host,
+                     lag = TRUE, spatial.error = FALSE,
+                     listw = nbw_inverted19, method = "w2sls")
+
+spgm_id <- list(id_spgm_no_host, id_spgm_host)
+
+Z <- (.535-.439)/(.096^2 +.092^2)^.5
 
 

@@ -14,7 +14,6 @@ ME_GDP_SIPRI <- dfs_SIPRI[[4]]
 
 ME_GDP_SIPRI <- ME_GDP_SIPRI %>%
   mutate_at(vars(starts_with("20")), as.numeric)
-str(ME_GDP_SIPRI)
 
 ME_GDP_SIPRI <- ME_GDP_SIPRI[-c(1:4, 6), ]
 ME_GDP_SIPRI <- ME_GDP_SIPRI[, -2]
@@ -155,7 +154,6 @@ df_sp <- main_df %>%
 df_c <- main_df %>%
   select(-geom_sp)
 
-
 df_sp <- df_sp %>%
   rename(ME_GDP = `ME/GDP`)
 
@@ -223,5 +221,17 @@ df_sp_test <- expand.grid(year = 2000:2022, country_name = nato_join_dates$count
   mutate(in_nato = mapply(nato_membership, year, country_name))
 
 df_sp <- merge(df_sp, df_sp_test, by = c("country_name", "year"))
+
+polyarchy <- read_csv("polyarchy-lexical.csv")
+
+polyarchy_df <- polyarchy %>%
+  filter(Year >= 2013) %>%
+  mutate(Entity = ifelse(Entity == "Turkey", "Turkiye", Entity)) %>%
+  filter(Entity %in% nato_countries) %>%
+  select(!Code) %>%
+  rename(country_name = Entity,
+         year = Year)
+
+df_sp <- merge(df_sp, polyarchy_df, by = c("country_name", "year"))
 
 df_sp <- st_sf(df_sp)
